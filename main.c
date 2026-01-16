@@ -146,6 +146,11 @@ void movePlayer(Player *player)
     }
 }
 
+void drawRayIntersection(BitMap *map, Player *player)
+{
+    
+}
+
 int main ()
 {
     int screen_width  = 800;
@@ -192,6 +197,8 @@ int main ()
 
         movePlayer(&player);
         drawPlayer(&player);
+
+        drawRayIntersection(&map, &player);
 
         EndDrawing();
     }
