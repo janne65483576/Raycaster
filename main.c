@@ -1,7 +1,8 @@
 #include "raylib.h"
+#include <math.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
-#include <math.h>
 #include <raymath.h>
 
 #define BIT_MAP_WIDTH 10
@@ -23,6 +24,11 @@ typedef struct
     Vector2 pos;
     Vector2 direction;
 }Player;
+
+typedef struct
+{
+    int x, y;
+} BitMapCoord;
 
 static inline int accessBitMap(BitMap *bit_map, int x, int y) {
     return bit_map->map[bit_map->tile_count_width * y + x];
@@ -99,22 +105,44 @@ void drawBitMap(BitMap *map)
     }
 }
 
+BitMapCoord screenToBitMap(BitMap *map, Vector2 input_pos)
+{
+    BitMapCoord res;
+    
+    res.x = ((int)input_pos.x - map->offset_x) / map->tile_size;
+    res.y = ((int)input_pos.y - map->offset_y) / map->tile_size;
+
+    if (res.x > map->tile_count_width - 1)
+    {
+        res.x = map->tile_count_width - 1;
+    }
+    else if (res.x < 0)
+    {
+        res.x = 0;
+    }
+
+    if (res.y > map->tile_count_height - 1)
+    {
+        res.y = map->tile_count_height - 1;
+    }
+    else if (res.y < 0) 
+    {
+        res.y = 0;
+    }
+
+    return res;
+}
+
 int *getMousePos(BitMap *map)
 {
-    Vector2 mouse = GetMousePosition();
+    BitMapCoord coord =  screenToBitMap(map, GetMousePosition());
 
-    mouse.x -= map->offset_x;
-    mouse.y -= map->offset_y;
-    
-    mouse.x = (int)(mouse.x / map->tile_size);
-    mouse.y = (int)(mouse.y / map->tile_size);
-    
-    mouse.x = mouse.x > map->tile_count_width  - 1 ? map->tile_count_width  - 1 : mouse.x;
-    mouse.y = mouse.y > map->tile_count_height - 1 ? map->tile_count_height - 1 : mouse.y;
-    mouse.x = mouse.x < 0 ? 0 : mouse.x;
-    mouse.y = mouse.y < 0 ? 0 : mouse.y;
+    return &map->map[coord.x + coord.y * map->tile_count_width];
+}
 
-    return &map->map[(int)mouse.x + (int)mouse.y * map->tile_count_width];
+void getPlayerDirection(Player *player)
+{
+    player->direction = Vector2Normalize(Vector2Subtract(GetMousePosition(), player->pos));
 }
 
 #define LINE_LEN 20.0f
@@ -123,32 +151,118 @@ void drawPlayer(Player *player)
     // draw players point
     DrawCircleV(player->pos, 3, DARKBLUE);
     
+    // draw a line pointing in player direction
     DrawLineV(player->pos, Vector2Add(Vector2Scale(player->direction, LINE_LEN), player->pos), DARKBLUE);
 }
 
-void movePlayer(Player *player)
+#define PLAYER_MOVE_SPEED   200.0f
+#define PLAYER_ROTATE_SPEED 5.0f
+
+void movePlayer(BitMap *map, Player *player)
 {
+    float delta_time = GetFrameTime();
+
     if(IsKeyDown(KEY_W))
     {
-        player->pos = Vector2Add(player->pos, Vector2Scale(player->direction, 3));
+        Vector2 new_pos = Vector2Add(player->pos, Vector2Scale(player->direction, PLAYER_MOVE_SPEED * delta_time));
+
+        BitMapCoord bit_map_coord = screenToBitMap(map, new_pos);
+
+        // check if the new position is valid
+        if (accessBitMap(map, bit_map_coord.x, bit_map_coord.y) == 0)
+        {
+            player->pos = new_pos;
+        }
     }
     if(IsKeyDown(KEY_S))
     {
-        player->pos = Vector2Subtract(player->pos, Vector2Scale(player->direction, 3));
-    }
-    if(IsKeyDown(KEY_A))
-    {
-        player->direction = Vector2Rotate(player->direction, 0.1);
-    }
-    if(IsKeyDown(KEY_D))
-    {
-        player->direction = Vector2Rotate(player->direction, -0.1);
+        Vector2 new_pos = Vector2Subtract(player->pos, Vector2Scale(player->direction, PLAYER_MOVE_SPEED * delta_time));
+
+        BitMapCoord bit_map_coord = screenToBitMap(map, new_pos);
+
+        // check if the new position is valid
+        if (accessBitMap(map, bit_map_coord.x, bit_map_coord.y) == 0)
+        {
+            player->pos = new_pos;
+        }
     }
 }
 
 void drawRayIntersection(BitMap *map, Player *player)
 {
-    
+    Vector2 start_pos = player->pos;
+    Vector2 direction = player->direction;
+
+    BitMapCoord map_coord = screenToBitMap(map, start_pos);
+
+    double delta_x = (direction.x == 0) ? 1e30 : fabs(1.0 / direction.x);
+    double delta_y = (direction.y == 0) ? 1e30 : fabs(1.0 / direction.y);
+
+    double curr_dist_x, curr_dist_y;
+    int step_x, step_y;
+
+    if (direction.x < 0)
+    {
+        curr_dist_x = (start_pos.x - (map_coord.x * map->tile_size + map->offset_x)) / map->tile_size * delta_x;
+        step_x = -1;
+    } else 
+    {
+        curr_dist_x = (((map_coord.x + 1) * map->tile_size + map->offset_x) - start_pos.x) / map->tile_size * delta_x;
+        step_x = 1;
+    }
+
+    if (direction.y < 0)
+    {
+        curr_dist_y = (start_pos.y - (map_coord.y * map->tile_size + map->offset_y)) / map->tile_size * delta_y;
+        step_y = -1;
+    } else 
+    {
+        curr_dist_y = (((map_coord.y + 1) * map->tile_size + map->offset_y) - start_pos.y) / map->tile_size * delta_y;
+        step_y = 1;
+    }
+
+    int hit_side; // 0 = x, 1 = y
+
+    while(true)
+    {
+        if (curr_dist_x < curr_dist_y)
+        {
+            curr_dist_x += delta_x;
+            hit_side = 0;
+            map_coord.x += step_x;
+        } else
+        {
+            curr_dist_y += delta_y;
+            hit_side = 1;
+            map_coord.y += step_y;
+        }
+
+        if (map_coord.x >= map->tile_count_width  || map_coord.x < 0 || 
+            map_coord.y >= map->tile_count_height || map_coord.y < 0)
+        {
+            return;
+        }
+
+        if (accessBitMap(map, map_coord.x, map_coord.y) != 0)
+        {
+            break;
+        }
+    }
+
+    double ray_length;
+
+    if (hit_side == 0)
+    {
+        ray_length = curr_dist_x - delta_x;
+    } else 
+    {
+        ray_length = curr_dist_y - delta_y;
+    }
+
+    Vector2 collision_point = Vector2Add(start_pos, Vector2Scale(direction, ray_length * map->tile_size));
+
+    DrawCircleV(collision_point, 2, RED);
+    DrawLineV(start_pos, collision_point, RED);
 }
 
 int main ()
@@ -158,7 +272,7 @@ int main ()
 
     SetConfigFlags(FLAG_WINDOW_RESIZABLE);
     InitWindow(screen_width, screen_height, "Raycaster Example");
-    SetTargetFPS(60);
+    //SetTargetFPS(60);
 
     // init the bit map
     int bit_map[BIT_MAP_WIDTH * BIT_MAP_HEIGHT] = {0};
@@ -195,11 +309,14 @@ int main ()
             *getMousePos(&map) = 0;
         }
 
-        movePlayer(&player);
+        
+        getPlayerDirection(&player);
+        movePlayer(&map, &player);
         drawPlayer(&player);
 
         drawRayIntersection(&map, &player);
-
+        
+        DrawText(TextFormat("FPS: %d", GetFPS()), 10, 10, 20, DARKGRAY);
         EndDrawing();
     }
 
