@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <raymath.h>
+#include <stdlib.h>
 
 #define BIT_MAP_WIDTH 10
 #define BIT_MAP_HEIGHT 10
@@ -21,7 +22,8 @@ typedef struct
 
 typedef struct 
 {
-    Vector2 pos;
+    Vector2 position;
+    Vector2 plane;
     Vector2 direction;
 }Player;
 
@@ -29,6 +31,19 @@ typedef struct
 {
     int x, y;
 } BitMapCoord;
+
+typedef struct 
+{
+    Vector2 position;
+    Texture2D texture;
+    float speed;
+} Sprite;
+
+typedef struct {
+    float distance;
+    int hit_side;
+    bool hit_tile;
+} RayHit;
 
 static inline int accessBitMap(BitMap *bit_map, int x, int y) {
     return bit_map->map[bit_map->tile_count_width * y + x];
@@ -140,59 +155,61 @@ int *getMousePos(BitMap *map)
     return &map->map[coord.x + coord.y * map->tile_count_width];
 }
 
-void getPlayerDirection(Player *player)
-{
-    player->direction = Vector2Normalize(Vector2Subtract(GetMousePosition(), player->pos));
-}
-
 #define LINE_LEN 20.0f
 void drawPlayer(Player *player)
 {
     // draw players point
-    DrawCircleV(player->pos, 3, DARKBLUE);
+    DrawCircleV(player->position, 3, DARKBLUE);
     
     // draw a line pointing in player direction
-    DrawLineV(player->pos, Vector2Add(Vector2Scale(player->direction, LINE_LEN), player->pos), DARKBLUE);
+    DrawLineV(player->position, Vector2Add(Vector2Scale(player->direction, LINE_LEN), player->position), DARKBLUE);
 }
 
-#define PLAYER_MOVE_SPEED   200.0f
-#define PLAYER_ROTATE_SPEED 5.0f
+#define PLAYER_MOVE_SPEED   50.0f
+#define PLAYER_ROTATE_SPEED 1.0f
 
-void movePlayer(BitMap *map, Player *player)
+void movePlayer(BitMap *map, Player *player, double fov)
 {
     float delta_time = GetFrameTime();
 
     if(IsKeyDown(KEY_W))
     {
-        Vector2 new_pos = Vector2Add(player->pos, Vector2Scale(player->direction, PLAYER_MOVE_SPEED * delta_time));
+        Vector2 new_pos = Vector2Add(player->position, Vector2Scale(player->direction, PLAYER_MOVE_SPEED * delta_time));
 
         BitMapCoord bit_map_coord = screenToBitMap(map, new_pos);
 
         // check if the new position is valid
         if (accessBitMap(map, bit_map_coord.x, bit_map_coord.y) == 0)
         {
-            player->pos = new_pos;
+            player->position = new_pos;
         }
     }
     if(IsKeyDown(KEY_S))
     {
-        Vector2 new_pos = Vector2Subtract(player->pos, Vector2Scale(player->direction, PLAYER_MOVE_SPEED * delta_time));
+        Vector2 new_pos = Vector2Subtract(player->position, Vector2Scale(player->direction, PLAYER_MOVE_SPEED * delta_time));
 
         BitMapCoord bit_map_coord = screenToBitMap(map, new_pos);
 
         // check if the new position is valid
         if (accessBitMap(map, bit_map_coord.x, bit_map_coord.y) == 0)
         {
-            player->pos = new_pos;
+            player->position = new_pos;
         }
+    }
+    if(IsKeyDown(KEY_A))
+    {
+        player->direction = Vector2Rotate(player->direction, -PLAYER_ROTATE_SPEED * delta_time);
+        player->plane = Vector2Scale((Vector2){ -player->direction.y, player->direction.x }, tan(fov / 2.0f));
+    }
+    if(IsKeyDown(KEY_D))
+    {
+        player->direction = Vector2Rotate(player->direction, PLAYER_ROTATE_SPEED * delta_time);
+        player->plane = Vector2Scale((Vector2){ -player->direction.y, player->direction.x }, tan(fov / 2.0f));
     }
 }
 
-void drawRayIntersection(BitMap *map, Player *player)
+RayHit castRay(BitMap *map, Vector2 start_pos, Vector2 direction)
 {
-    Vector2 start_pos = player->pos;
-    Vector2 direction = player->direction;
-
     BitMapCoord map_coord = screenToBitMap(map, start_pos);
 
     double delta_x = (direction.x == 0) ? 1e30 : fabs(1.0 / direction.x);
@@ -240,7 +257,7 @@ void drawRayIntersection(BitMap *map, Player *player)
         if (map_coord.x >= map->tile_count_width  || map_coord.x < 0 || 
             map_coord.y >= map->tile_count_height || map_coord.y < 0)
         {
-            return;
+            return(RayHit){.hit_tile = false};
         }
 
         if (accessBitMap(map, map_coord.x, map_coord.y) != 0)
@@ -259,16 +276,44 @@ void drawRayIntersection(BitMap *map, Player *player)
         ray_length = curr_dist_y - delta_y;
     }
 
-    Vector2 collision_point = Vector2Add(start_pos, Vector2Scale(direction, ray_length * map->tile_size));
+    return(RayHit){ray_length, hit_side, .hit_tile = true};
+}
 
-    DrawCircleV(collision_point, 2, RED);
-    DrawLineV(start_pos, collision_point, RED);
+void renderScene(BitMap *map, Player *player)
+{
+    int screen_width = GetScreenWidth();
+    int screen_height = GetScreenHeight();
+    
+    for (int x_coord = 0; x_coord < GetRenderWidth(); x_coord++)
+    {
+        double camera_x = 2.0f * x_coord / screen_width - 1.0f;
+
+        Vector2 ray_direction = Vector2Add(player->direction, Vector2Scale(player->plane, camera_x));
+
+        RayHit hit = castRay(map, player->position, ray_direction);
+        
+        if (hit.hit_tile == false) continue;
+
+        int line_height = (int)(screen_height / hit.distance);
+
+        int draw_start = -line_height / 2 + screen_height / 2;
+        int draw_end   =  line_height / 2 + screen_height / 2;
+
+        if (draw_start < 0) draw_start = 0;
+        if (draw_end >= screen_height) draw_end = screen_height - 1;
+
+        Color wall_color = (hit.hit_side == 0) ? GRAY : DARKGRAY;
+
+        DrawLine(x_coord, draw_start, x_coord, draw_end, wall_color);
+    }
 }
 
 int main ()
 {
     int screen_width  = 800;
     int screen_height = 650;
+    
+    double fov = 60 * DEG2RAD;
 
     SetConfigFlags(FLAG_WINDOW_RESIZABLE);
     InitWindow(screen_width, screen_height, "Raycaster Example");
@@ -283,8 +328,17 @@ int main ()
 
     // init the player
     Player player;
-    player.pos = (Vector2){300, 300};
-    player.direction = Vector2Normalize((Vector2){1, 0.75});
+    player.position = (Vector2){300, 300};
+    player.direction = (Vector2){1, 1};
+    player.plane = Vector2Scale((Vector2){ -player.direction.y, player.direction.x },tan(fov / 2.0f));
+
+    // init sprite
+    Sprite enemy = {
+        .position = (Vector2){ 450, 300 },
+        .texture = LoadTexture("texture.jpeg")
+    };
+
+    bool draw_bitmap = true;
 
     while (!WindowShouldClose())
     {
@@ -294,27 +348,35 @@ int main ()
         ClearBackground(RAYWHITE);
 
         updateBitMap(&map, screen_width, screen_height);
-        drawBitMap(&map);
 
         if (IsKeyPressed(KEY_C))
         {
+            player.position = (Vector2){screen_width / 2, screen_height / 2};
             memset(map.map, 0, map.tile_count_width * map.tile_count_height * sizeof(int));
         }
 
-        if (IsMouseButtonDown(MOUSE_BUTTON_LEFT))
+        if (IsKeyPressed(KEY_M))
         {
-            *getMousePos(&map) = 1;
-        }else if (IsMouseButtonDown(MOUSE_BUTTON_RIGHT))
-        {
-            *getMousePos(&map) = 0;
+            draw_bitmap = !draw_bitmap;
         }
-
         
-        getPlayerDirection(&player);
-        movePlayer(&map, &player);
-        drawPlayer(&player);
+        movePlayer(&map, &player, fov);
+        
+        if (draw_bitmap)
+        {
+            if (IsMouseButtonDown(MOUSE_BUTTON_LEFT))
+            {
+                *getMousePos(&map) = 1;
+            }else if (IsMouseButtonDown(MOUSE_BUTTON_RIGHT))
+            {
+                *getMousePos(&map) = 0;
+            }
 
-        drawRayIntersection(&map, &player);
+            drawBitMap(&map);
+            drawPlayer(&player);
+        }else {
+            renderScene(&map, &player);
+        }
         
         DrawText(TextFormat("FPS: %d", GetFPS()), 10, 10, 20, DARKGRAY);
         EndDrawing();
