@@ -13,14 +13,14 @@ typedef struct
 {
     int *map;
     int tile_count_width, tile_count_height;
-    
+
     // based on the screen dimensions
     int tile_size;
     int width_px, height_px;
     int offset_x, offset_y;
 }BitMap;
 
-typedef struct 
+typedef struct
 {
     Vector2 position;
     Vector2 plane;
@@ -32,7 +32,7 @@ typedef struct
     int x, y;
 } BitMapCoord;
 
-typedef struct 
+typedef struct
 {
     Vector2 position;
     Texture2D texture;
@@ -43,6 +43,8 @@ typedef struct {
     float distance;
     int hit_side;
     bool hit_tile;
+
+    int tile_x, tile_y;
 } RayHit;
 
 static inline int accessBitMap(BitMap *bit_map, int x, int y) {
@@ -123,7 +125,7 @@ void drawBitMap(BitMap *map)
 BitMapCoord screenToBitMap(BitMap *map, Vector2 input_pos)
 {
     BitMapCoord res;
-    
+
     res.x = ((int)input_pos.x - map->offset_x) / map->tile_size;
     res.y = ((int)input_pos.y - map->offset_y) / map->tile_size;
 
@@ -140,7 +142,7 @@ BitMapCoord screenToBitMap(BitMap *map, Vector2 input_pos)
     {
         res.y = map->tile_count_height - 1;
     }
-    else if (res.y < 0) 
+    else if (res.y < 0)
     {
         res.y = 0;
     }
@@ -160,13 +162,13 @@ void drawPlayer(Player *player)
 {
     // draw players point
     DrawCircleV(player->position, 3, DARKBLUE);
-    
+
     // draw a line pointing in player direction
     DrawLineV(player->position, Vector2Add(Vector2Scale(player->direction, LINE_LEN), player->position), DARKBLUE);
 }
 
-#define PLAYER_MOVE_SPEED   50.0f
-#define PLAYER_ROTATE_SPEED 1.0f
+#define PLAYER_MOVE_SPEED   500.0f
+#define PLAYER_ROTATE_SPEED 4.0f
 
 void movePlayer(BitMap *map, Player *player, double fov)
 {
@@ -222,7 +224,7 @@ RayHit castRay(BitMap *map, Vector2 start_pos, Vector2 direction)
     {
         curr_dist_x = (start_pos.x - (map_coord.x * map->tile_size + map->offset_x)) / map->tile_size * delta_x;
         step_x = -1;
-    } else 
+    } else
     {
         curr_dist_x = (((map_coord.x + 1) * map->tile_size + map->offset_x) - start_pos.x) / map->tile_size * delta_x;
         step_x = 1;
@@ -232,7 +234,7 @@ RayHit castRay(BitMap *map, Vector2 start_pos, Vector2 direction)
     {
         curr_dist_y = (start_pos.y - (map_coord.y * map->tile_size + map->offset_y)) / map->tile_size * delta_y;
         step_y = -1;
-    } else 
+    } else
     {
         curr_dist_y = (((map_coord.y + 1) * map->tile_size + map->offset_y) - start_pos.y) / map->tile_size * delta_y;
         step_y = 1;
@@ -254,7 +256,7 @@ RayHit castRay(BitMap *map, Vector2 start_pos, Vector2 direction)
             map_coord.y += step_y;
         }
 
-        if (map_coord.x >= map->tile_count_width  || map_coord.x < 0 || 
+        if (map_coord.x >= map->tile_count_width  || map_coord.x < 0 ||
             map_coord.y >= map->tile_count_height || map_coord.y < 0)
         {
             return(RayHit){.hit_tile = false};
@@ -271,19 +273,19 @@ RayHit castRay(BitMap *map, Vector2 start_pos, Vector2 direction)
     if (hit_side == 0)
     {
         ray_length = curr_dist_x - delta_x;
-    } else 
+    } else
     {
         ray_length = curr_dist_y - delta_y;
     }
 
-    return(RayHit){ray_length, hit_side, .hit_tile = true};
+    return(RayHit){ray_length, hit_side, .hit_tile = true, .tile_x = map_coord.x, .tile_y = map_coord.y};
 }
 
-void renderScene(BitMap *map, Player *player)
+void renderScene(BitMap *map, Player *player, bool double_height)
 {
     int screen_width = GetScreenWidth();
     int screen_height = GetScreenHeight();
-    
+
     for (int x_coord = 0; x_coord < GetRenderWidth(); x_coord++)
     {
         double camera_x = 2.0f * x_coord / screen_width - 1.0f;
@@ -291,13 +293,26 @@ void renderScene(BitMap *map, Player *player)
         Vector2 ray_direction = Vector2Add(player->direction, Vector2Scale(player->plane, camera_x));
 
         RayHit hit = castRay(map, player->position, ray_direction);
-        
-        if (hit.hit_tile == false) continue;
+
+        if (hit.hit_tile == false)
+        {
+            DrawLine(x_coord, 0, x_coord, screen_height / 2, (Color){171, 200, 245, 255});
+            DrawLine(x_coord, screen_height / 2, x_coord, screen_height, DARKGREEN);
+            continue;
+        }
+
+        int height = accessBitMap(map, hit.tile_x, hit.tile_y);
+        //printf("%d, %d, height: %d\n", hit.tile_x, hit.tile_y, height);
 
         int line_height = (int)(screen_height / hit.distance);
+        int stacked_height = (int)(screen_height * height / hit.distance);
 
-        int draw_start = -line_height / 2 + screen_height / 2;
-        int draw_end   =  line_height / 2 + screen_height / 2;
+        int draw_end = screen_height / 2 + line_height / 2;
+        int draw_start = draw_end - stacked_height;
+
+        // draw background
+        DrawLine(x_coord, 0, x_coord, draw_start, (Color){171, 200, 245, 255}); // light blue
+        DrawLine(x_coord, draw_end, x_coord, screen_height, DARKGREEN);
 
         if (draw_start < 0) draw_start = 0;
         if (draw_end >= screen_height) draw_end = screen_height - 1;
@@ -312,7 +327,7 @@ int main ()
 {
     int screen_width  = 800;
     int screen_height = 650;
-    
+
     double fov = 60 * DEG2RAD;
 
     SetConfigFlags(FLAG_WINDOW_RESIZABLE);
@@ -332,13 +347,9 @@ int main ()
     player.direction = (Vector2){1, 1};
     player.plane = Vector2Scale((Vector2){ -player.direction.y, player.direction.x },tan(fov / 2.0f));
 
-    // init sprite
-    Sprite enemy = {
-        .position = (Vector2){ 450, 300 },
-        .texture = LoadTexture("texture.jpeg")
-    };
-
     bool draw_bitmap = true;
+
+    SetTargetFPS(60);
 
     while (!WindowShouldClose())
     {
@@ -359,25 +370,29 @@ int main ()
         {
             draw_bitmap = !draw_bitmap;
         }
-        
+
         movePlayer(&map, &player, fov);
-        
+
         if (draw_bitmap)
         {
-            if (IsMouseButtonDown(MOUSE_BUTTON_LEFT))
+            if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
             {
-                *getMousePos(&map) = 1;
-            }else if (IsMouseButtonDown(MOUSE_BUTTON_RIGHT))
+                *getMousePos(&map) += 1;
+            }else if (IsMouseButtonPressed(MOUSE_BUTTON_RIGHT))
             {
-                *getMousePos(&map) = 0;
+                int *mouse_pos = getMousePos(&map);
+                if (*mouse_pos > 0)
+                {
+                    *mouse_pos -= 1;
+                }
             }
 
             drawBitMap(&map);
             drawPlayer(&player);
         }else {
-            renderScene(&map, &player);
+            renderScene(&map, &player, true);
         }
-        
+
         DrawText(TextFormat("FPS: %d", GetFPS()), 10, 10, 20, DARKGRAY);
         EndDrawing();
     }
